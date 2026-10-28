@@ -10,7 +10,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
-  composePrompt, expandNames, formatExecResult, validateConfig,
+  composeAlias, composePrompt, execArgs, expandNames, formatExecResult, validateConfig,
   type ExecOutcome, type SlashCommand,
 } from './core.ts'
 
@@ -21,18 +21,23 @@ const READ_PATH = '/api/dsh-slash-command/read'
 const SAVE_PATH = '/api/dsh-slash-command/save'
 const MAX_BUFFER = 4 * 1024 * 1024
 const MAX_BODY = 1024 * 1024
+/** alias 链最大深度，防 a → b → a 这类循环。 */
+const MAX_ALIAS_DEPTH = 8
+const ALIAS_DEPTH = Symbol('dsh-slash-command.aliasDepth')
 
 // 宿主命令 / agent / connection 的最小结构面，避免依赖额外类型包。
-type Result = { kind: 'success'; text?: string } | { kind: 'error'; text: string }
+type Result = { kind: 'success'; text?: string; sourceEventSeq?: number } | { kind: 'error'; text: string }
 interface AgentFace { steer(message: unknown): void; ctx?: unknown }
-interface Invocation { agent: AgentFace; rawInput: string; signal: AbortSignal }
+interface Invocation { agent: AgentFace; rawInput: string; signal: AbortSignal; [ALIAS_DEPTH]?: number }
+interface CommandDef {
+  name: string
+  description: string
+  input: { hint: string }
+  handler: (inv: Invocation) => Result | Promise<Result>
+}
 interface CommandsFace {
-  register(def: {
-    name: string
-    description: string
-    input: { hint: string }
-    handler: (inv: Invocation) => Result | Promise<Result>
-  }): () => void
+  register(def: CommandDef): () => void
+  find(agent: AgentFace, name: string): CommandDef | undefined
 }
 interface ConnectionFace {
   fetch: {
@@ -64,9 +69,13 @@ async function workspaceOf(ctx: Context, agent: AgentFace, signal: AbortSignal):
   return process.cwd()
 }
 
-function runExec(command: string, cwd: string, timeout: number, signal: AbortSignal): Promise<ExecOutcome> {
+function runExec(command: string, rawInput: string, cwd: string, timeout: number, signal: AbortSignal): Promise<ExecOutcome> {
+  const { env, argv } = execArgs(rawInput)
   return new Promise((resolve) => {
-    execFile('/bin/bash', ['-lc', command], { cwd, timeout, maxBuffer: MAX_BUFFER, signal }, (err, stdout, stderr) => {
+    // bash -c script name args…：argv 成为 $1…，脚本文本里不拼任何用户输入
+    execFile('/bin/bash', ['-lc', command, 'dsh-slash-command', ...argv], {
+      cwd, timeout, maxBuffer: MAX_BUFFER, signal, env: { ...process.env, ...env },
+    }, (err, stdout, stderr) => {
       if (err === null) return resolve({ exit: '0', stdout, stderr })
       const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string }
       if (typeof e.code === 'number') return resolve({ exit: String(e.code), stdout, stderr })
@@ -77,7 +86,19 @@ function runExec(command: string, cwd: string, timeout: number, signal: AbortSig
   })
 }
 
-function makeHandler(ctx: Context, cmd: SlashCommand): (inv: Invocation) => Promise<Result> {
+function makeHandler(ctx: Context, commands: CommandsFace, cmd: SlashCommand): (inv: Invocation) => Promise<Result> {
+  if (cmd.type === 'alias') {
+    // 直接调用目标命令的 handler：结果落在本条命令卡片里，不再多出一张卡
+    return async (inv) => {
+      const depth = (inv[ALIAS_DEPTH] ?? 0) + 1
+      if (depth > MAX_ALIAS_DEPTH) return { kind: 'error', text: `/${cmd.name}: alias chain too deep` }
+      const line = composeAlias(cmd.target!, inv.rawInput)
+      const m = /^\/([a-z][a-z0-9_-]*)/.exec(line)
+      const target = m === null ? undefined : commands.find(inv.agent, m[1]!)
+      if (target === undefined) return { kind: 'error', text: `${line.split(/\s/)[0]}: unknown command` }
+      return target.handler({ ...inv, rawInput: line.slice(m![0].length), [ALIAS_DEPTH]: depth })
+    }
+  }
   if (cmd.type === 'prompt') {
     return (inv) => {
       steerText(inv.agent, composePrompt(cmd.prompt!, inv.rawInput))
@@ -87,7 +108,7 @@ function makeHandler(ctx: Context, cmd: SlashCommand): (inv: Invocation) => Prom
   return async (inv) => {
     const cwd = cmd.cwd === undefined || cmd.cwd === 'workspace' ? await workspaceOf(ctx, inv.agent, inv.signal) : cmd.cwd
     // 对标 Hermes quick_commands：只在本机执行并回显，不 steer、不触发模型回合。
-    const outcome = await runExec(cmd.command!, cwd, cmd.timeoutMs!, inv.signal)
+    const outcome = await runExec(cmd.command!, inv.rawInput, cwd, cmd.timeoutMs!, inv.signal)
     const text = formatExecResult(outcome)
     return outcome.exit === '0' ? { kind: 'success', text } : { kind: 'error', text }
   }
@@ -133,7 +154,7 @@ export function apply(ctx: Context): void {
     unregisterAll()
     applied = text
     for (const cmd of valid) {
-      const handler = makeHandler(ctx, cmd)
+      const handler = makeHandler(ctx, commands, cmd)
       for (const n of expandNames(cmd)) {
         try {
           disposers.push(commands.register({ name: n, description: cmd.description, input: { hint: '[args]' }, handler }))

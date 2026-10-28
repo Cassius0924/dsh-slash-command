@@ -9,9 +9,11 @@ export interface SlashCommand {
   name: string
   aliases: string[]
   description: string
-  type: 'prompt' | 'exec'
+  type: 'prompt' | 'exec' | 'alias'
   prompt?: string
   command?: string
+  /** alias 型：另一条斜杠命令，如 `/compact` 或 `/review 只看 src`。 */
+  target?: string
   cwd?: string
   timeoutMs?: number
 }
@@ -23,6 +25,9 @@ export interface FieldError {
   code: 'type' | 'required' | 'pattern' | 'duplicate' | 'enum' | 'range'
   message: string
 }
+
+/** alias 目标：`/name` 后可跟固定参数；开头的 `/` 可省略。 */
+const TARGET_RE = /^\/?([a-z][a-z0-9_-]*)(?:\s[\s\S]*)?$/
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.trim() !== ''
@@ -66,9 +71,15 @@ export function validateConfig(raw: unknown): { commands: SlashCommand[]; errors
       if (seen.has(n) || own.indexOf(n) !== i) fail(n === item.name ? 'name' : 'aliases', 'duplicate', `"${n}" is already used`)
     })
     if (!nonEmpty(item.description)) fail('description', 'required', 'description is required')
-    if (item.type !== 'prompt' && item.type !== 'exec') fail('type', 'enum', 'type must be "prompt" or "exec"')
+    if (item.type !== 'prompt' && item.type !== 'exec' && item.type !== 'alias') fail('type', 'enum', 'type must be "prompt", "exec" or "alias"')
     else if (item.type === 'prompt' && !nonEmpty(item.prompt)) fail('prompt', 'required', 'prompt is required for prompt commands')
     else if (item.type === 'exec' && !nonEmpty(item.command)) fail('command', 'required', 'command is required for exec commands')
+    else if (item.type === 'alias') {
+      const m = typeof item.target === 'string' ? TARGET_RE.exec(item.target.trim()) : null
+      if (!nonEmpty(item.target)) fail('target', 'required', 'target is required for alias commands')
+      else if (m === null) fail('target', 'pattern', `target "${String(item.target)}" must be a slash command like /compact`)
+      else if (own.includes(m[1]!)) fail('target', 'duplicate', `alias /${m[1]} cannot target itself`)
+    }
     if (item.cwd !== undefined && !(typeof item.cwd === 'string' && (item.cwd === 'workspace' || item.cwd.startsWith('/')))) {
       fail('cwd', 'enum', 'cwd must be "workspace" or an absolute path')
     }
@@ -88,6 +99,7 @@ export function validateConfig(raw: unknown): { commands: SlashCommand[]; errors
       type: item.type as 'prompt' | 'exec',
     }
     if (cmd.type === 'prompt') cmd.prompt = item.prompt as string
+    else if (cmd.type === 'alias') cmd.target = normalizeTarget(item.target as string)
     else {
       cmd.command = item.command as string
       cmd.cwd = (item.cwd as string | undefined) ?? 'workspace'
@@ -106,6 +118,28 @@ export function composePrompt(prompt: string, rawInput: string): string {
   const args = rawInput.trim()
   if (prompt.includes('$ARGUMENTS')) return prompt.replaceAll('$ARGUMENTS', () => args)
   return args === '' ? prompt : `${prompt}\n\n${args}`
+}
+
+/** 统一成 `/name args` 形式。 */
+export const normalizeTarget = (target: string): string => {
+  const t = target.trim()
+  return t.startsWith('/') ? t : `/${t}`
+}
+
+/** alias 展开：`$ARGUMENTS` 原位替换；否则参数以空格接在目标命令后。 */
+export function composeAlias(target: string, rawInput: string): string {
+  const args = rawInput.trim()
+  if (target.includes('$ARGUMENTS')) return target.replaceAll('$ARGUMENTS', () => args).trim()
+  return args === '' ? target : `${target} ${args}`
+}
+
+/**
+ * exec 参数以变量形式传入而非拼进脚本（不会被当成代码执行）：
+ * `$ARGUMENTS` = 完整参数，`$1 $2 …` / `"$@"` = 按空白拆分的参数。
+ */
+export function execArgs(rawInput: string): { env: Record<string, string>; argv: string[] } {
+  const args = rawInput.trim()
+  return { env: { ARGUMENTS: args }, argv: args === '' ? [] : args.split(/\s+/) }
 }
 
 /** 按 UTF-8 字节截断（不拆字符）。 */

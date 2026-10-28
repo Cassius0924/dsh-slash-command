@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  composePrompt, expandNames, formatExecResult, validateConfig, OUTPUT_LIMIT,
+  composeAlias, composePrompt, execArgs, expandNames, formatExecResult, validateConfig, OUTPUT_LIMIT,
 } from '../lib/core.js'
 
 const prompt = { name: 'review', aliases: ['rv'], description: 'd', type: 'prompt', prompt: 'p $ARGUMENTS' }
@@ -86,4 +86,27 @@ test('exec result: output echoed as-is, exit appended only on failure, capped at
   const big = formatExecResult({ exit: '1', stdout: '好'.repeat(20000), stderr: 'E' })
   assert.ok(Buffer.byteLength(big) <= OUTPUT_LIMIT + 32)
   assert.match(big, /\[truncated\]\nexit=1$/)
+})
+
+test('alias: validation normalizes target and rejects bad/self targets', () => {
+  const ok = validateConfig({ commands: [{ name: 'c', description: 'd', type: 'alias', target: 'compact' }] })
+  assert.deepEqual(ok.errors, [])
+  assert.equal(ok.commands[0].target, '/compact')
+  const bad = validateConfig({ commands: [
+    { name: 'a', description: 'd', type: 'alias' },
+    { name: 'b', description: 'd', type: 'alias', target: '/Bad' },
+    { name: 'c', aliases: ['cc'], description: 'd', type: 'alias', target: '/cc x' },
+  ] })
+  assert.deepEqual(bad.errors.map(e => [e.index, e.field, e.code]), [[0, 'target', 'required'], [1, 'target', 'pattern'], [2, 'target', 'duplicate']])
+})
+
+test('alias: $ARGUMENTS in place, otherwise appended with a space', () => {
+  assert.equal(composeAlias('/compact', ''), '/compact')
+  assert.equal(composeAlias('/review 只看', ' src '), '/review 只看 src')
+  assert.equal(composeAlias('/review $ARGUMENTS 严格', 'src'), '/review src 严格')
+})
+
+test('exec args: passed as variables, never spliced into the script', () => {
+  assert.deepEqual(execArgs(''), { env: { ARGUMENTS: '' }, argv: [] })
+  assert.deepEqual(execArgs('  -n  5 ; rm x '), { env: { ARGUMENTS: '-n  5 ; rm x' }, argv: ['-n', '5', ';', 'rm', 'x'] })
 })

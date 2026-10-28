@@ -8,8 +8,9 @@ interface Draft {
   name: string
   aliases: string
   description: string
-  type: 'prompt' | 'exec'
+  type: 'prompt' | 'exec' | 'alias'
   prompt: string
+  target: string
   command: string
   cwd: string
   timeoutMs: string
@@ -17,14 +18,15 @@ interface Draft {
 
 interface ApiError { index?: number; field?: string; code: string; message: string }
 
-const blank = (): Draft => ({ name: '', aliases: '', description: '', type: 'prompt', prompt: '', command: '', cwd: '', timeoutMs: '' })
+const blank = (): Draft => ({ name: '', aliases: '', description: '', type: 'prompt', prompt: '', target: '', command: '', cwd: '', timeoutMs: '' })
 
 const toDraft = (c: Record<string, unknown>): Draft => ({
   name: String(c.name ?? ''),
   aliases: Array.isArray(c.aliases) ? c.aliases.join(', ') : '',
   description: String(c.description ?? ''),
-  type: c.type === 'exec' ? 'exec' : 'prompt',
+  type: c.type === 'exec' || c.type === 'alias' ? c.type : 'prompt',
   prompt: String(c.prompt ?? ''),
+  target: String(c.target ?? ''),
   command: String(c.command ?? ''),
   cwd: c.cwd === undefined || c.cwd === 'workspace' ? '' : String(c.cwd),
   timeoutMs: c.timeoutMs === undefined || c.timeoutMs === 30000 ? '' : String(c.timeoutMs),
@@ -39,6 +41,7 @@ function toWire(d: Draft): Record<string, unknown> {
     type: d.type,
   }
   if (d.type === 'prompt') out.prompt = d.prompt
+  else if (d.type === 'alias') out.target = d.target.trim()
   else {
     out.command = d.command
     if (d.cwd.trim() !== '') out.cwd = d.cwd.trim()
@@ -66,6 +69,8 @@ async function saveAll(commands: Draft[], t: T): Promise<SaveResult> {
     return { ok: false, errors: [], text: t('saveFailed', { detail: e instanceof Error ? e.message : String(e) }) }
   }
 }
+
+const TYPES = ['prompt', 'exec', 'alias'] as const
 
 /** 打开中的编辑卡：`index` 为 undefined 表示新增。 */
 interface Editing { index: number | undefined; draft: Draft }
@@ -163,6 +168,7 @@ export function SlashCommandSection({ t }: { t: T }): ReactElement {
                         <code className="dsc-name">/{c.name}</code>
                         {aliasList(c).map(a => <code key={a} className="dsc-tag">/{a}</code>)}
                         {c.type === 'exec' && <span className="dsc-tag">{t('type.exec')}</span>}
+                        {c.type === 'alias' && <code className="dsc-tag">→ {c.target.startsWith('/') ? c.target : `/${c.target}`}</code>}
                       </span>
                       {!open && deleting !== i && (
                         <span className="dsc-actions">
@@ -247,9 +253,9 @@ function Editor({ t, draft, errors, failure, busy, onChange, onCancel, onSave }:
 
   return (
     <form className="dsc-editor" onSubmit={(e) => { e.preventDefault(); onSave() }}>
-      <div className="dsc-segmented" role="group" aria-label={t('field.type')} style={{ '--dsc-index': draft.type === 'exec' ? 1 : 0 } as CSSProperties}>
+      <div className="dsc-segmented" role="group" aria-label={t('field.type')} style={{ '--dsc-index': TYPES.indexOf(draft.type), '--dsc-count': TYPES.length } as CSSProperties}>
         <span className="dsc-indicator" aria-hidden="true" />
-        {(['prompt', 'exec'] as const).map(v => (
+        {TYPES.map(v => (
           <button key={v} type="button" aria-pressed={draft.type === v} className="dsc-segment" onClick={() => onChange({ type: v })}>
             {t(`type.${v}`)}
           </button>
@@ -266,18 +272,18 @@ function Editor({ t, draft, errors, failure, busy, onChange, onCancel, onSave }:
         {field('aliases', text('aliases', { placeholder: 'rv, r', mono: true }))}
       </div>
       {field('description', text('description'))}
-      {draft.type === 'prompt'
-        ? field('prompt', area('prompt', 5), 'tip.prompt')
-        : (
+      {draft.type === 'prompt' && field('prompt', area('prompt', 5), 'tip.prompt')}
+      {draft.type === 'alias' && field('target', text('target', { placeholder: '/compact', mono: true }), 'tip.target')}
+      {draft.type === 'exec' && (
           <>
-            {field('command', area('command', 3))}
+            {field('command', area('command', 3), 'tip.command')}
             <div className="dsc-grid">
               {field('cwd', text('cwd', { placeholder: 'workspace', mono: true }), 'tip.cwd')}
               {field('timeoutMs', text('timeoutMs', { placeholder: '30000', inputMode: 'numeric' }))}
             </div>
             <p className="dsc-warn">{t('execWarn')}</p>
           </>
-        )}
+      )}
       {failure !== undefined && <p className="dsc-error" role="alert">{failure}</p>}
       <div className="dsc-editor-actions">
         <button type="button" className="dsc-btn dsc-secondary" disabled={busy} onClick={onCancel}>{t('cancel')}</button>
