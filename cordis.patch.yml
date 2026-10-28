@@ -1,0 +1,4 @@
+# 同一行同时承载 host 半边（main 导出）与 client 半边（package.json 的 dsh.client）。
+- insert:
+    - id: dsh-slash-command
+      name: 'dsh-slash-command'
