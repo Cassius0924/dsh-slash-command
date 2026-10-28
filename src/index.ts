@@ -10,7 +10,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
-  composePrompt, expandNames, formatExecForModel, formatExecForUi, validateConfig,
+  composePrompt, expandNames, formatExecResult, validateConfig,
   type ExecOutcome, type SlashCommand,
 } from './core.ts'
 
@@ -86,9 +86,9 @@ function makeHandler(ctx: Context, cmd: SlashCommand): (inv: Invocation) => Prom
   }
   return async (inv) => {
     const cwd = cmd.cwd === undefined || cmd.cwd === 'workspace' ? await workspaceOf(ctx, inv.agent, inv.signal) : cmd.cwd
+    // 对标 Hermes quick_commands：只在本机执行并回显，不 steer、不触发模型回合。
     const outcome = await runExec(cmd.command!, cwd, cmd.timeoutMs!, inv.signal)
-    steerText(inv.agent, formatExecForModel(cmd.command!, outcome))
-    const text = formatExecForUi(outcome)
+    const text = formatExecResult(outcome)
     return outcome.exit === '0' ? { kind: 'success', text } : { kind: 'error', text }
   }
 }

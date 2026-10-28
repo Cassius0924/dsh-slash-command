@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  composePrompt, expandNames, formatExecForModel, formatExecForUi, validateConfig, OUTPUT_LIMIT,
+  composePrompt, expandNames, formatExecResult, validateConfig, OUTPUT_LIMIT,
 } from '../lib/core.js'
 
 const prompt = { name: 'review', aliases: ['rv'], description: 'd', type: 'prompt', prompt: 'p $ARGUMENTS' }
@@ -78,17 +78,12 @@ test('alias expansion: name first, then aliases', () => {
   assert.deepEqual(expandNames({ ...exec, aliases: [] }), ['branch'])
 })
 
-test('exec output: model text carries exit/stdout/stderr, capped at 16KB', () => {
-  const small = formatExecForModel('echo hi', { exit: '0', stdout: 'hi\n', stderr: 'warn\n' })
-  assert.match(small, /exit=0/)
-  assert.match(small, /--- stdout ---\nhi/)
-  assert.match(small, /--- stderr ---\nwarn/)
-  const big = formatExecForModel('x', { exit: '1', stdout: '好'.repeat(20000), stderr: 'E' })
+test('exec result: output echoed as-is, exit appended only on failure, capped at 16KB', () => {
+  assert.equal(formatExecResult({ exit: '0', stdout: 'main\n', stderr: '' }), 'main')
+  assert.equal(formatExecResult({ exit: '0', stdout: '', stderr: '' }), 'exit=0')
+  assert.equal(formatExecResult({ exit: '2', stdout: '1\n2\n', stderr: 'boom\n' }), '1\n2\nboom\nexit=2')
+  assert.equal(formatExecResult({ exit: 'timeout(SIGTERM)', stdout: '', stderr: '' }), 'exit=timeout(SIGTERM)')
+  const big = formatExecResult({ exit: '1', stdout: '好'.repeat(20000), stderr: 'E' })
   assert.ok(Buffer.byteLength(big) <= OUTPUT_LIMIT + 32)
-  assert.match(big, /truncated/)
-})
-
-test('exec UI text: first 3 lines + exit', () => {
-  assert.equal(formatExecForUi({ exit: '2', stdout: '1\n2\n3\n4\n', stderr: '' }), '1\n2\n3\nexit=2')
-  assert.equal(formatExecForUi({ exit: '0', stdout: '', stderr: '' }), 'exit=0')
+  assert.match(big, /\[truncated\]\nexit=1$/)
 })

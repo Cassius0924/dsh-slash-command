@@ -121,22 +121,12 @@ export interface ExecOutcome {
   stderr: string
 }
 
-/** 给模型看的 steer 文本：exit + stdout + stderr 合计截断到 16KB。 */
-export function formatExecForModel(command: string, o: ExecOutcome): string {
-  const head = `$ ${command}\nexit=${o.exit}`
-  let budget = Math.max(OUTPUT_LIMIT - Buffer.byteLength(head), 0)
-  const parts = [head]
-  for (const [label, body] of [['stdout', o.stdout], ['stderr', o.stderr]] as const) {
-    if (body === '' || budget <= 0) continue
-    const piece = clip(body, budget)
-    budget -= Buffer.byteLength(piece)
-    parts.push(`--- ${label} ---\n${piece}`)
-  }
-  return parts.join('\n')
-}
-
-/** UI 结果文本：输出前 3 行 + exit=N。 */
-export function formatExecForUi(o: ExecOutcome): string {
-  const lines = (o.stdout + o.stderr).split('\n').filter(l => l !== '').slice(0, 3)
-  return [...lines, `exit=${o.exit}`].join('\n')
+/**
+ * exec 结果直接回显在命令卡片里（不进模型）：stdout + stderr 合计截断到 16KB；
+ * 非零退出/超时在末尾附 `exit=N`，无输出时只给 exit。
+ */
+export function formatExecResult(o: ExecOutcome): string {
+  const output = clip(`${o.stdout}${o.stderr}`.replace(/\s+$/, ''), OUTPUT_LIMIT)
+  if (o.exit === '0') return output === '' ? 'exit=0' : output
+  return output === '' ? `exit=${o.exit}` : `${output}\nexit=${o.exit}`
 }
