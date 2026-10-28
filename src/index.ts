@@ -185,6 +185,14 @@ export function apply(ctx: Context): void {
     methods: ['POST'],
     requestBody: 'buffered',
     fetch: async (request) => {
+      // 保存会写入可执行命令：拒绝跨站与非 JSON 请求（非简单 content-type 会强制 CORS 预检，宿主不会放行）。
+      if (!(request.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json')) {
+        return json(415, { ok: false, errors: [{ code: 'type', message: 'content-type must be application/json' }] })
+      }
+      const origin = request.headers.get('origin')
+      if (origin !== null && origin !== new URL(request.url).origin) {
+        return json(403, { ok: false, errors: [{ code: 'type', message: 'cross-origin request rejected' }] })
+      }
       const body = await request.text()
       if (body.length > MAX_BODY) return json(413, { ok: false, errors: [{ code: 'range', message: 'body too large' }] })
       let raw: unknown
