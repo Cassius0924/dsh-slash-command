@@ -1,6 +1,6 @@
 {
   "name": "dsh-slash-command",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DSH 自定义斜杠命令：别名 + prompt 型 + exec 型 + Web UI 配置",
   "keywords": [
     "dsh",
