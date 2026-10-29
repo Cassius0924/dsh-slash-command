@@ -10,7 +10,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
-  composeAlias, composePrompt, execArgs, expandNames, formatExecResult, validateConfig,
+  composeAlias, composePrompt, execArgs, expandNames, formatExecResult, redactSecrets, scrubEnv, secretValues, validateConfig,
   type ExecOutcome, type SlashCommand,
 } from './core.ts'
 
@@ -69,12 +69,15 @@ async function workspaceOf(ctx: Context, agent: AgentFace, signal: AbortSignal):
   return process.cwd()
 }
 
-function runExec(command: string, rawInput: string, cwd: string, timeout: number, signal: AbortSignal): Promise<ExecOutcome> {
+function runExec(cmd: SlashCommand, rawInput: string, cwd: string, signal: AbortSignal): Promise<ExecOutcome> {
   const { env, argv } = execArgs(rawInput)
+  const command = cmd.command!
+  const timeout = cmd.timeoutMs!
   return new Promise((resolve) => {
     // bash -c script name args…：argv 成为 $1…，脚本文本里不拼任何用户输入
     execFile('/bin/bash', ['-lc', command, 'dsh-slash-command', ...argv], {
-      cwd, timeout, maxBuffer: MAX_BUFFER, signal, env: { ...process.env, ...env },
+      // 对标 Hermes：dsh 进程环境里有各家 API key，子进程默认拿不到
+      cwd, timeout, maxBuffer: MAX_BUFFER, signal, env: { ...scrubEnv(process.env, cmd.passEnv), ...env },
     }, (err, stdout, stderr) => {
       if (err === null) return resolve({ exit: '0', stdout, stderr })
       const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string }
@@ -108,8 +111,10 @@ function makeHandler(ctx: Context, commands: CommandsFace, cmd: SlashCommand): (
   return async (inv) => {
     const cwd = cmd.cwd === undefined || cmd.cwd === 'workspace' ? await workspaceOf(ctx, inv.agent, inv.signal) : cmd.cwd
     // 对标 Hermes quick_commands：只在本机执行并回显，不 steer、不触发模型回合。
-    const outcome = await runExec(cmd.command!, inv.rawInput, cwd, cmd.timeoutMs!, inv.signal)
-    const text = formatExecResult(outcome)
+    const outcome = await runExec(cmd, inv.rawInput, cwd, inv.signal)
+    // 结果会写进会话记录，先遮蔽再显示
+    const known = secretValues(process.env)
+    const text = formatExecResult({ ...outcome, stdout: redactSecrets(outcome.stdout, known), stderr: redactSecrets(outcome.stderr, known) })
     return outcome.exit === '0' ? { kind: 'success', text } : { kind: 'error', text }
   }
 }

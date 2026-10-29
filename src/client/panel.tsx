@@ -14,11 +14,12 @@ interface Draft {
   command: string
   cwd: string
   timeoutMs: string
+  passEnv: string
 }
 
 interface ApiError { index?: number; field?: string; code: string; message: string }
 
-const blank = (): Draft => ({ name: '', aliases: '', description: '', type: 'prompt', prompt: '', target: '', command: '', cwd: '', timeoutMs: '' })
+const blank = (): Draft => ({ name: '', aliases: '', description: '', type: 'prompt', prompt: '', target: '', command: '', cwd: '', timeoutMs: '', passEnv: '' })
 
 const toDraft = (c: Record<string, unknown>): Draft => ({
   name: String(c.name ?? ''),
@@ -30,6 +31,7 @@ const toDraft = (c: Record<string, unknown>): Draft => ({
   command: String(c.command ?? ''),
   cwd: c.cwd === undefined || c.cwd === 'workspace' ? '' : String(c.cwd),
   timeoutMs: c.timeoutMs === undefined || c.timeoutMs === 30000 ? '' : String(c.timeoutMs),
+  passEnv: Array.isArray(c.passEnv) ? c.passEnv.join(', ') : '',
 })
 
 /** 空字符串省略，交给服务端补默认值；timeoutMs 非数字原样发出，由服务端报 range。 */
@@ -46,6 +48,8 @@ function toWire(d: Draft): Record<string, unknown> {
     out.command = d.command
     if (d.cwd.trim() !== '') out.cwd = d.cwd.trim()
     if (d.timeoutMs.trim() !== '') out.timeoutMs = Number(d.timeoutMs)
+    const passEnv = d.passEnv.split(',').map(s => s.trim()).filter(s => s !== '')
+    if (passEnv.length > 0) out.passEnv = passEnv
   }
   return out
 }
@@ -237,7 +241,7 @@ function Editor({ t, draft, errors, failure, busy, onChange, onCancel, onSave }:
           {tip && <Help label={t('help', { field: label })} text={t(tip)} />}
         </span>
         {control({ id, ...err ? { 'aria-invalid': true, 'aria-describedby': `${id}-err` } : {} })}
-        {err && <span id={`${id}-err`} className="dsc-error">{t(`err.${err.code}` as LocaleKey)}</span>}
+        {err && <span id={`${id}-err`} className="dsc-error">{t(key === 'passEnv' && err.code === 'pattern' ? 'err.envName' : `err.${err.code}` as LocaleKey)}</span>}
       </div>
     )
   }
@@ -281,6 +285,7 @@ function Editor({ t, draft, errors, failure, busy, onChange, onCancel, onSave }:
               {field('cwd', text('cwd', { placeholder: 'workspace', mono: true }), 'tip.cwd')}
               {field('timeoutMs', text('timeoutMs', { placeholder: '30000', inputMode: 'numeric' }))}
             </div>
+            {field('passEnv', text('passEnv', { placeholder: 'GH_TOKEN', mono: true }), 'tip.passEnv')}
             <p className="dsc-warn">{t('execWarn')}</p>
           </>
       )}

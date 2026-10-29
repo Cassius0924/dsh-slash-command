@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  composeAlias, composePrompt, execArgs, expandNames, formatExecResult, validateConfig, OUTPUT_LIMIT,
+  composeAlias, composePrompt, execArgs, expandNames, formatExecResult, redactSecrets, scrubEnv, secretValues, validateConfig, OUTPUT_LIMIT,
 } from '../lib/core.js'
 
 const prompt = { name: 'review', aliases: ['rv'], description: 'd', type: 'prompt', prompt: 'p $ARGUMENTS' }
@@ -109,4 +109,40 @@ test('alias: $ARGUMENTS in place, otherwise appended with a space', () => {
 test('exec args: passed as variables, never spliced into the script', () => {
   assert.deepEqual(execArgs(''), { env: { ARGUMENTS: '' }, argv: [] })
   assert.deepEqual(execArgs('  -n  5 ; rm x '), { env: { ARGUMENTS: '-n  5 ; rm x' }, argv: ['-n', '5', ';', 'rm', 'x'] })
+})
+
+test('env scrub: secret-looking names dropped unless passEnv, benign look-alikes kept', () => {
+  const env = {
+    PATH: '/bin', HOME: '/root', SSH_AUTH_SOCK: '/tmp/s', KEYBOARD: 'us', XDG_SESSION_ID: '3',
+    DEEPSEEK_API_KEY: 'sk-aaaaaaaaaaaaaaaaaaaa', LANGFUSE_SECRET_KEY: 'x', GH_TOKEN: 'ghp_x', DB_PASSWORD: 'p', AWS_ACCESS_KEY_ID: 'AKIA',
+  }
+  assert.deepEqual(Object.keys(scrubEnv(env)).sort(), ['HOME', 'KEYBOARD', 'PATH', 'SSH_AUTH_SOCK', 'XDG_SESSION_ID'])
+  assert.ok('GH_TOKEN' in scrubEnv(env, ['GH_TOKEN']))
+  assert.deepEqual(secretValues(env), ['sk-aaaaaaaaaaaaaaaaaaaa'])
+})
+
+test('redaction: known values and common secret formats are masked, ordinary text is not', () => {
+  const known = ['s3cr3t-value-123']
+  const out = redactSecrets([
+    'v=s3cr3t-value-123',
+    'DEEPSEEK_API_KEY=sk-abcdefghijklmnop1234',
+    'token: ghp_abcdefghijklmnopqrstuvwxyz0123',
+    'Authorization: Bearer abc.def.ghi',
+    '"apiKey": "live_123456"',
+    'postgres://admin:hunter22@db:5432/x',
+    'jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig',
+    '-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----',
+    'main 3f2a1b9 fix: keyboard layout; token count 42',
+  ].join('\n'), known)
+  for (const leak of ['s3cr3t-value-123', 'abcdefghijklmnop1234', 'abcdefghijklmnopqrstuvwxyz0123', 'abc.def.ghi', 'live_123456', 'hunter22', 'eyJzdWIiOiIxIn0', 'MIIE']) {
+    assert.ok(!out.includes(leak), `leaked ${leak}\n${out}`)
+  }
+  assert.equal(redactSecrets('using sk-abcdefghijklmnop1234 now'), 'using sk-*** now')
+  assert.match(out, /main 3f2a1b9 fix: keyboard layout; token count 42/)
+})
+
+test('passEnv: validated as env var names', () => {
+  const base = { name: 'x', description: 'd', type: 'exec', command: 'gh pr list' }
+  assert.deepEqual(validateConfig({ commands: [{ ...base, passEnv: ['GH_TOKEN'] }] }).commands[0].passEnv, ['GH_TOKEN'])
+  assert.equal(validateConfig({ commands: [{ ...base, passEnv: ['bad-name'] }] }).errors[0].field, 'passEnv')
 })

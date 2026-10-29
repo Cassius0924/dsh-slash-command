@@ -33,7 +33,7 @@ dsh plugin --profile web add dsh-slash-command
 ]}
 ```
 
-`name`/别名需匹配 `^[a-z][a-z0-9_-]*$`；`cwd` 为 `workspace`（当前会话目录）或绝对路径；`timeoutMs` 默认 30000，上限 600000。
+`name`/别名需匹配 `^[a-z][a-z0-9_-]*$`；`cwd` 为 `workspace`（当前会话目录）或绝对路径；`timeoutMs` 默认 30000，上限 600000；`passEnv` 见下方「安全」。
 
 参数（命令名后面的文字）：
 
@@ -43,6 +43,13 @@ dsh plugin --profile web add dsh-slash-command
 ## 安全
 
 Shell 命令以 dsh 进程权限运行，**没有审批确认**。能写配置文件或能登录 Web UI 的人就等于拥有这个权限，请只在可信环境使用。
+
+对标 Hermes，Shell 命令额外做两层防误泄露：
+
+- **环境变量过滤**：名字含 `KEY` / `TOKEN` / `SECRET` / `PASSWORD` / `CREDENTIAL` / `AUTH` 等片段的变量（如 `DEEPSEEK_API_KEY`）不传给命令。确实需要的，在该命令的 `passEnv` 里列出，例如 `"passEnv":["GH_TOKEN"]`。
+- **输出遮蔽**：结果会写进会话记录，显示前先把 dsh 环境里的密钥值、常见 key 格式（`sk-…`、`ghp_…`、`AKIA…` 等）、`XXX_KEY=…` 赋值、`Authorization` 头、JWT、私钥块、URL 里的账号密码替换成 `***`。
+
+这两层只降低误泄露概率，**不是安全边界**：命令与 dsh 同一系统用户，仍能直接读取 `~/.dsh` 等文件。
 
 ## 开发
 
