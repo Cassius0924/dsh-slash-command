@@ -105,7 +105,8 @@ function makeHandler(ctx: Context, commands: CommandsFace, cmd: SlashCommand): (
   if (cmd.type === 'prompt') {
     return (inv) => {
       steerText(inv.agent, composePrompt(cmd.prompt!, inv.rawInput))
-      return Promise.resolve({ kind: 'success', text: '已发送' })
+      // steer 出的用户消息就是展示，命令本身不再回显
+      return Promise.resolve({ kind: 'success' })
     }
   }
   return async (inv) => {
@@ -115,7 +116,8 @@ function makeHandler(ctx: Context, commands: CommandsFace, cmd: SlashCommand): (
     // 结果会写进会话记录，先遮蔽再显示
     const known = secretValues(process.env)
     const text = formatExecResult({ ...outcome, stdout: redactSecrets(outcome.stdout, known), stderr: redactSecrets(outcome.stderr, known) })
-    return outcome.exit === '0' ? { kind: 'success', text } : { kind: 'error', text }
+    if (outcome.exit !== '0') return { kind: 'error', text }
+    return text === '' ? { kind: 'success' } : { kind: 'success', text }
   }
 }
 

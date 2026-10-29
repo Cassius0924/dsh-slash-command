@@ -218,10 +218,10 @@ export interface ExecOutcome {
 
 /**
  * exec 结果直接回显在命令卡片里（不进模型）：stdout + stderr 合计截断到 16KB；
- * 非零退出/超时在末尾附 `exit=N`，无输出时只给 exit。
+ * 非零退出/超时在末尾附 `exit=N`；成功且无输出时为空串，由界面显示「没有输出」提示。
  */
 export function formatExecResult(o: ExecOutcome): string {
   const output = clip(`${o.stdout}${o.stderr}`.replace(/\s+$/, ''), OUTPUT_LIMIT)
-  if (o.exit === '0') return output === '' ? 'exit=0' : output
+  if (o.exit === '0') return output
   return output === '' ? `exit=${o.exit}` : `${output}\nexit=${o.exit}`
 }

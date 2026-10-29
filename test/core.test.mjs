@@ -80,7 +80,7 @@ test('alias expansion: name first, then aliases', () => {
 
 test('exec result: output echoed as-is, exit appended only on failure, capped at 16KB', () => {
   assert.equal(formatExecResult({ exit: '0', stdout: 'main\n', stderr: '' }), 'main')
-  assert.equal(formatExecResult({ exit: '0', stdout: '', stderr: '' }), 'exit=0')
+  assert.equal(formatExecResult({ exit: '0', stdout: '', stderr: '' }), '')
   assert.equal(formatExecResult({ exit: '2', stdout: '1\n2\n', stderr: 'boom\n' }), '1\n2\nboom\nexit=2')
   assert.equal(formatExecResult({ exit: 'timeout(SIGTERM)', stdout: '', stderr: '' }), 'exit=timeout(SIGTERM)')
   const big = formatExecResult({ exit: '1', stdout: '好'.repeat(20000), stderr: 'E' })

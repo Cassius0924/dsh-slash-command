@@ -1,7 +1,11 @@
-/** dsh-slash-command client 半边：设置弹窗里的「自定义命令」分区（settings.section）。 */
+/**
+ * dsh-slash-command client 半边：设置弹窗里的「自定义命令」分区（settings.section），
+ * 以及会话里命令的气泡 + 回复呈现（见 chat.tsx）。
+ */
 import type { Context } from '@deepseek-ai/cordis'
+import { echoDefinition, Hidden, makeReply, type CommandType } from './chat.tsx'
 import { en, NS, zh, type LocaleKey } from './locales.ts'
-import { SlashCommandSection } from './panel.tsx'
+import { CHANGED_EVENT, SlashCommandSection } from './panel.tsx'
 
 export const name = 'dsh-slash-command'
 export const inject = ['slots', 'locale']
@@ -11,8 +15,9 @@ type Translate = (key: LocaleKey, params?: Record<string, unknown>) => string
 interface ClientContext extends Context {
   slots: {
     inject(key: string, callback: () => unknown): () => void
-    register(options: { name: string; id: string; order: number; locale: string; label: () => string }, component: unknown): () => void
+    register(options: { name: string; id?: string; key?: string; order?: number; locale?: string; label?: () => string }, component: unknown): () => void
   }
+  uiConversation: { events: { register(definition: unknown): () => void } }
   locale: {
     register(ns: string, dictionaries: { zh: Record<string, string>; en: Record<string, string> }): () => void
     bind(ns: string): Translate
@@ -79,6 +84,10 @@ code.dsc-tag{font-family:var(--ds-font-family-code)}
 .dsc-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}
 .dsc-notice{display:flex;align-items:center;gap:12px;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary)}
 .dsc-editor-actions{display:flex;justify-content:flex-end;gap:8px}
+.dsc-reply{margin:0;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere}
+.dsc-reply-block{padding:10px 12px;border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-module-platform);font-family:var(--ds-font-family-code);font-size:13px;line-height:20px;max-height:480px;overflow:auto}
+.dsc-reply[data-error]{color:var(--dsw-alias-state-error-primary)}
+.dsc-reply-muted{color:var(--dsw-alias-label-tertiary)}
 @media (prefers-reduced-motion:reduce){.dsc-indicator{transition:none}}
 `
 
@@ -97,4 +106,43 @@ export function apply(ctx: ClientContext): void {
     { name: 'settings.section', id: 'slash-commands', order: 25, locale: NS, label: () => t('title') },
     SlashCommandSection,
   ))
+
+  // 会话呈现依赖命令名 → 类型；设置页保存后重新拉取并重新注册，历史会话随之重新匹配。
+  ctx.inject(['uiConversation'], (scope) => {
+    const c = scope as unknown as ClientContext
+    const ExecReply = makeReply(t, true)
+    const AliasReply = makeReply(t, false)
+    let mounted: (() => void)[] = []
+    const mount = (types: Map<string, CommandType>): void => {
+      for (const dispose of mounted) dispose()
+      mounted = [c.uiConversation.events.register(echoDefinition(types))]
+      for (const [name, type] of types) {
+        mounted.push(c.slots.inject('conversation.chat.commandview', () => c.slots.register(
+          { name: 'conversation.chat.commandview', key: name },
+          type === 'prompt' ? Hidden : type === 'exec' ? ExecReply : AliasReply,
+        )))
+      }
+    }
+    const load = (): void => {
+      fetch('/api/dsh-slash-command/read', { headers: { accept: 'application/json' }, cache: 'no-store' })
+        .then(res => res.json() as Promise<{ ok: boolean; commands?: { name?: unknown; aliases?: unknown; type?: unknown }[] }>)
+        .then((body) => {
+          if (!body.ok) return
+          const types = new Map<string, CommandType>()
+          for (const cmd of body.commands ?? []) {
+            const type = cmd.type === 'exec' || cmd.type === 'alias' ? cmd.type : 'prompt'
+            const names = [cmd.name, ...Array.isArray(cmd.aliases) ? cmd.aliases : []]
+            for (const n of names) if (typeof n === 'string' && n !== '') types.set(n, type)
+          }
+          mount(types)
+        })
+        .catch(() => { /* 读不到就保持原生单行卡片 */ })
+    }
+    load()
+    if (typeof window !== 'undefined') {
+      window.addEventListener(CHANGED_EVENT, load)
+      c.effect(() => () => window.removeEventListener(CHANGED_EVENT, load), 'dsh-slash-command: config changes')
+    }
+    c.effect(() => () => { for (const dispose of mounted) dispose() }, 'dsh-slash-command: chat presentation')
+  })
 }

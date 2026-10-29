@@ -76,6 +76,9 @@ async function saveAll(commands: Draft[], t: T): Promise<SaveResult> {
 
 const TYPES = ['prompt', 'exec', 'alias'] as const
 
+/** 保存成功后广播，会话里的命令呈现据此刷新名单。 */
+export const CHANGED_EVENT = 'dsh-slash-command:changed'
+
 /** 打开中的编辑卡：`index` 为 undefined 表示新增。 */
 interface Editing { index: number | undefined; draft: Draft }
 
@@ -111,6 +114,7 @@ export function SlashCommandSection({ t }: { t: T }): ReactElement {
     setBusy(false)
     if (result.ok) {
       setCommands(next)
+      window.dispatchEvent(new Event(CHANGED_EVENT))
       setAnnounce(t('saved'))
       return true
     }

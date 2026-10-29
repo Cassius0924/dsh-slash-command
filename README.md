@@ -6,7 +6,7 @@
 给 [DSH](https://github.com/deepseek-ai)（DeepSeek Harness）加自定义斜杠命令，对标 Hermes 的 `quick_commands`：
 
 - **Prompt 型**：`/review 只看 src` → 把预设 prompt 发给模型，`$ARGUMENTS` 替换为命令后的参数。
-- **Shell 型**：`/log 5` → 在本机直接执行，输出回显在命令卡片里，**不经过模型、不消耗 token**。
+- **Shell 型**：`/log 5` → 在本机直接执行，像 Hermes 一样在会话里显示为「你的命令气泡 + 输出回复」（无输出时提示「命令没有返回任何输出」），**不经过模型、不消耗 token**。
 - **转发型（alias）**：`/c` → 转发到另一条斜杠命令（如 `/compact`），可带固定参数。
 - 支持别名，在「设置 → 自定义命令」里增删改，保存即生效，无需重启。
 
